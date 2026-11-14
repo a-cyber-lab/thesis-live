@@ -165,6 +165,9 @@ function barChart(svg, configs) {
       el("rect", {x, y: Math.min(Y(v), Y(0)), width: bw - 2, height: Math.abs(Y(v) - Y(0)), rx: 2,
                   fill: COL(c === "D" ? "--d" : "--f")}, svg);
     });
+    // label every day while they fit, otherwise every second or third day, always ending on the latest
+    const step = Math.max(1, Math.ceil(3.8 * FS / slot));
+    if ((dates.length - 1 - i) % step) return;
     const d = new Date(dt + "T12:00:00+10:00");
     el("text", {x: cx, y: H - 0.6 * FS, "text-anchor": "middle", "font-size": FS, fill: ink3}, svg, fmtDay(d));
   });
