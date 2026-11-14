@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thesis B Live Controller</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --card: #ffffff; --ink: #1b1b1a; --ink2: #55544f; --ink3: #8a8880;
+    --line: #e3e2de; --red: #a6192e; --d: #2a78d6; --f: #eb6834; --ok: #2e8b57; --warn: #c27c0e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #151514; --card: #1f1f1d; --ink: #f1f0ec; --ink2: #c3c1ba; --ink3: #8f8d86;
+      --line: #34332f; --red: #e0485f; --d: #5b9be6; --f: #f08a5b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+  header { background: var(--red); color: #fff; padding: 18px 16px 16px; }
+  header h1 { margin: 0; font-size: 21px; letter-spacing: .2px; }
+  header p { margin: 4px 0 0; opacity: .92; font-size: 14px; }
+  main { max-width: 980px; margin: 0 auto; padding: 14px 16px 32px; }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink2); margin: 2px 0 14px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ink3); flex: none; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px rgba(46,139,87,.18); }
+  .dot.warn { background: var(--warn); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .card h2 { margin: 0 0 2px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+  .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .kept { font-size: 44px; font-weight: 700; line-height: 1.05; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
+  .kept small { display: block; font-size: 14px; font-weight: 500; color: var(--ink2); margin-top: 2px; }
+  .kept small.inline { display: inline; }
+  .sub { color: var(--ink2); font-size: 14px; }
+  .now { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 14px; }
+  .now b { font-weight: 600; }
+  .row { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--ink2); font-size: 13px; margin-top: 4px; }
+  h3 { font-size: 15px; margin: 22px 0 8px; }
+  .chart { width: 100%; height: auto; display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--ink2); margin: 0 0 4px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 18px; height: 0; border-top: 2.5px solid; display: inline-block; }
+  .legend i.dash { border-top-style: dashed; }
+  .note { font-size: 13.5px; color: var(--ink2); }
+  .note p { margin: 6px 0; }
+  footer { margin-top: 22px; font-size: 12.5px; color: var(--ink3); }
+  .err { color: var(--warn); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Thesis B: live battery controller</h1>
+  <p>Model predictive control of a home solar battery, running in real time on a Raspberry Pi 5 every 10 minutes.</p>
+</header>
+<main>
+  <div class="status"><span class="dot" id="dot"></span><span id="status">Loading the latest run…</span></div>
+  <div class="grid" id="cards"></div>
+
+  <h3>Spot price, last 48 hours ($/MWh, NSW)</h3>
+  <div class="legend"><span><i style="border-color:var(--ink2)"></i>Actual dispatch price</span>
+    <span><i class="dash" style="border-color:var(--red)"></i>Forecast the controller used</span></div>
+  <svg class="chart" id="price" viewBox="0 0 900 260" role="img" aria-label="Spot price chart"></svg>
+
+  <h3>Battery state of charge, last 48 hours (%)</h3>
+  <div class="legend"><span><i style="border-color:var(--d)"></i>Configuration D</span>
+    <span><i style="border-color:var(--f)"></i>Configuration F</span></div>
+  <svg class="chart" id="soc" viewBox="0 0 900 240" role="img" aria-label="State of charge chart"></svg>
+
+  <h3>Saving by day, live controller ($)</h3>
+  <div class="legend"><span><i style="border-color:var(--d)"></i>Configuration D</span>
+    <span><i style="border-color:var(--f)"></i>Configuration F</span></div>
+  <svg class="chart" id="daily" viewBox="0 0 900 230" role="img" aria-label="Daily saving chart"></svg>
+
+  <h3>How to read this</h3>
+  <div class="note">
+    <p>Every 10 minutes the controller plans the next 12 hours using only what was published before the decision: AEMO pre-dispatch price forecasts and Open-Meteo solar forecasts. Each step is then settled at the actual 5-minute dispatch prices.</p>
+    <p><b>Share kept</b> compares that live saving with a perfect-foresight run over the same steps, which knows the actual prices and solar in advance. Perfect foresight is the usual assumption in battery studies; the gap is the cost of real forecasts.</p>
+    <p>This is a shadow plant: the solar output is Open-Meteo's estimate and the household load is modelled, so it tests the controller and its data pipeline in real time rather than measuring a real bill.</p>
+  </div>
+  <footer id="foot">Engineering Research Thesis B, Macquarie University.</footer>
+</main>
+<script>
+const TZ = "Australia/Brisbane";               // AEST all year, the NEM's clock
+const COL = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmtTime = d => d.toLocaleTimeString("en-AU", {timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false});
+const fmtDay = d => d.toLocaleDateString("en-AU", {timeZone: TZ, day: "numeric", month: "short"});
+const money = x => (x < 0 ? "-$" : "$") + Math.abs(x).toLocaleString("en-AU", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const mwh = x => (x < 0 ? "-$" : "$") + Math.abs(x).toFixed(0) + "/MWh";
+const NS = "http://www.w3.org/2000/svg";
+
+function el(tag, attrs, parent, text) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text !== undefined) e.textContent = text;
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+function niceTicks(lo, hi, n) {
+  const span = hi - lo || 1, step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => span / s <= n) || 10 * mag;
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(6));
+  return out;
+}
+
+// chart text in viewBox units, so it stays readable when a 900-wide chart is shown on a phone
+const fsz = svg => Math.round(12 * Math.max(1, Math.min(2, 0.75 * 900 / (svg.getBoundingClientRect().width || 900))));
+
+function lineChart(svg, t, series, opt) {
+  svg.innerHTML = "";
+  const FS = fsz(svg);
+  const W = 900, H = +svg.getAttribute("viewBox").split(" ")[3], L = 22 + 2.6 * FS, R = 10, T = 10, B = 12 + 1.4 * FS;
+  const xs = t.map(s => new Date(s).getTime());
+  const all = series.flatMap(s => s.y.filter(v => v !== null));
+  let lo = opt.min !== undefined ? opt.min : Math.min(...all), hi = opt.max !== undefined ? opt.max : Math.max(...all);
+  if (opt.min === undefined) { const pad = (hi - lo) * 0.08 || 5; lo -= pad; hi += pad; }
+  const x0 = xs[0], x1 = xs[xs.length - 1];
+  const X = v => L + (v - x0) / (x1 - x0 || 1) * (W - L - R), Y = v => T + (hi - v) / (hi - lo || 1) * (H - T - B);
+  const ink3 = COL("--ink3"), line = COL("--line");
+  for (const v of niceTicks(lo, hi, 5)) {
+    el("line", {x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: line, "stroke-width": 1}, svg);
+    el("text", {x: L - 6, y: Y(v) + 4, "text-anchor": "end", "font-size": FS, fill: ink3}, svg, v.toLocaleString("en-AU"));
+  }
+  if (lo < 0 && hi > 0) el("line", {x1: L, x2: W - R, y1: Y(0), y2: Y(0), stroke: ink3, "stroke-width": 1}, svg);
+  // midnight and midday AEST gridlines
+  const hour = 3600e3, first = Math.ceil((x0 + 10 * hour) / (12 * hour)) * 12 * hour - 10 * hour;
+  for (let v = first; v <= x1; v += 12 * hour) {
+    const d = new Date(v), midnight = fmtTime(d) === "00:00";
+    el("line", {x1: X(v), x2: X(v), y1: T, y2: H - B, stroke: line, "stroke-width": midnight ? 1.4 : 0.8}, svg);
+    el("text", {x: X(v), y: H - 0.6 * FS, "text-anchor": "middle", "font-size": FS, fill: ink3}, svg, midnight ? fmtDay(d) : "12:00");
+  }
+  for (const s of series) {
+    let d = "", pen = false;
+    s.y.forEach((v, i) => {
+      if (v === null) { pen = false; return; }
+      d += (pen ? "L" : "M") + X(xs[i]).toFixed(1) + " " + Y(Math.max(lo, Math.min(hi, v))).toFixed(1);
+      pen = true;
+    });
+    el("path", {d, fill: "none", stroke: COL(s.color), "stroke-width": s.width || 2,
+                "stroke-dasharray": s.dash ? "6 4" : "none", "stroke-linejoin": "round"}, svg);
+  }
+}
+
+function barChart(svg, configs) {
+  svg.innerHTML = "";
+  const FS = fsz(svg);
+  const W = 900, H = 230, L = 22 + 2.6 * FS, R = 10, T = 10, B = 12 + 1.4 * FS;
+  const ids = Object.keys(configs), dates = [...new Set(ids.flatMap(c => configs[c].daily.map(d => d.date)))].sort();
+  const val = (c, dt) => (configs[c].daily.find(d => d.date === dt) || {}).saving || 0;
+  const all = ids.flatMap(c => dates.map(dt => val(c, dt)));
+  const hi = Math.max(1, ...all) * 1.1, lo = Math.min(0, ...all) * 1.1;
+  const Y = v => T + (hi - v) / (hi - lo) * (H - T - B), slot = (W - L - R) / dates.length, bw = Math.min(28, slot / (ids.length + 1));
+  const ink3 = COL("--ink3"), line = COL("--line");
+  for (const v of niceTicks(lo, hi, 4)) {
+    el("line", {x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: line}, svg);
+    el("text", {x: L - 6, y: Y(v) + 4, "text-anchor": "end", "font-size": FS, fill: ink3}, svg, "$" + v);
+  }
+  dates.forEach((dt, i) => {
+    const cx = L + slot * (i + 0.5);
+    ids.forEach((c, j) => {
+      const v = val(c, dt), x = cx + (j - ids.length / 2) * bw;
+      el("rect", {x, y: Math.min(Y(v), Y(0)), width: bw - 2, height: Math.abs(Y(v) - Y(0)), rx: 2,
+                  fill: COL(c === "D" ? "--d" : "--f")}, svg);
+    });
+    const d = new Date(dt + "T12:00:00+10:00");
+    el("text", {x: cx, y: H - 0.6 * FS, "text-anchor": "middle", "font-size": FS, fill: ink3}, svg, fmtDay(d));
+  });
+}
+
+function action(n) {
+  if (n.batt_kw > 0.05) return `discharging ${n.batt_kw.toFixed(1)} kW`;
+  if (n.batt_kw < -0.05) return `charging ${(-n.batt_kw).toFixed(1)} kW from solar`;
+  return "holding";
+}
+
+let LAST = null;
+window.addEventListener("resize", () => { if (LAST) render(LAST); });
+
+function render(data) {
+  LAST = data;
+  const last = new Date(data.last_tick), age = (Date.now() - last.getTime()) / 60000;
+  document.getElementById("dot").className = "dot " + (age < 25 ? "ok" : "warn");
+  const agoTxt = age < 1 ? "just now" : age < 90 ? `${Math.round(age)} min ago` : `${(age / 60).toFixed(1)} h ago`;
+  document.getElementById("status").textContent = (age < 25 ? "Running. " : "No update recently. ") +
+    `Last run ${fmtDay(last)} ${fmtTime(last)} AEST (${agoTxt}).`;
+
+  const cards = document.getElementById("cards");
+  cards.innerHTML = "";
+  for (const [cid, c] of Object.entries(data.configs)) {
+    const n = c.now, start = new Date(c.start);
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `
+      <h2><span class="swatch" style="background:var(--${cid.toLowerCase()})"></span>Configuration ${cid}</h2>
+      <div class="kept">${c.kept === null ? "…" : c.kept.toFixed(1) + "%"} <small>of the perfect-foresight saving kept</small></div>
+      <div class="sub">Live saving ${money(c.live)} against ${money(c.pf)} with perfect foresight,
+        since ${fmtDay(start)} (${c.days.toFixed(1)} days).</div>
+      <div class="now"><b>Now:</b> battery ${action(n)}, ${n.soc.toFixed(0)}% charged.
+        <div class="row"><span>Solar ${n.pv_kw.toFixed(1)} kW</span><span>Load ${n.load_kw.toFixed(1)} kW</span>
+        <span>Export ${n.export_kw.toFixed(1)} kW</span></div></div>`;
+    cards.appendChild(card);
+  }
+  const anyC = Object.values(data.configs)[0];
+  if (anyC) {
+    const n = anyC.now, p = document.createElement("div");
+    p.className = "card";
+    p.innerHTML = `<h2>Spot price now</h2>
+      <div class="kept">${(n.price / 10).toFixed(2)}<small class="inline"> c/kWh</small></div>
+      <div class="sub">${mwh(n.price)} for ${fmtTime(new Date(n.step))} AEST.
+        ${n.price_fc === null ? "" : `The forecast the controller planned on was ${mwh(n.price_fc)}.`}</div>`;
+    cards.appendChild(p);
+  }
+
+  const s = data.series;
+  lineChart(document.getElementById("price"), s.t,
+            [{y: s.price, color: "--ink2"}, {y: s.price_fc, color: "--red", dash: true}], {});
+  lineChart(document.getElementById("soc"), s.t,
+            Object.keys(data.configs).map(c => ({y: s["soc_" + c], color: c === "D" ? "--d" : "--f"})), {min: 0, max: 100});
+  barChart(document.getElementById("daily"), data.configs);
+  document.getElementById("foot").textContent =
+    `${data.runs.toLocaleString("en-AU")} scheduled runs, ${data.failed} failed; median run ${data.median_s} s. ` +
+    "Engineering Research Thesis B, Macquarie University.";
+}
+
+async function load() {
+  if (window.LIVE_DATA) { render(window.LIVE_DATA); return; }   // snapshot.sh copy, data inlined
+  try {
+    const r = await fetch("live.json?t=" + Date.now(), {cache: "no-store"});
+    render(await r.json());
+  } catch (e) {
+    document.getElementById("status").innerHTML = '<span class="err">Could not load the latest data. Retrying in a minute.</span>';
+  }
+}
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>
